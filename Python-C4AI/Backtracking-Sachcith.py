@@ -297,22 +297,20 @@ class Connect4:
             move = -1
             if self.__player:
                 self.__player = False
-                temp = int(input("Enter a value from 1-7: "))
-                move = temp-1
-                while temp>7 or temp<1:
-                    print(temp,"is not in range.")
-                    temp = int(input("Enter a value from 1-7: "))
-                    move = temp-1
-                temp = self.__board.insert(temp-1,"X")
-                while temp!=True:
-                    print("Column alread full")
-                    temp = int(input("Enter a value from 1-7: "))
-                    move = temp-1
-                    while temp>7 or temp<1:
-                        print(temp,"is not in range.")
+                while True:
+                    try:
                         temp = int(input("Enter a value from 1-7: "))
-                        move = temp-1
-                    temp = self.__board.insert(temp-1,"X")
+                        if temp<1 or temp>7:
+                            continue
+                        if not self.__board.insert(temp-1,"X"):
+                            continue
+                        break
+                    except KeyboardInterrupt:
+                        exit()
+                    except:
+                        continue
+                
+                move = temp-1
             else:
                 self.__player = True
                 val,index = self.next_move_alpha_beta(False,0,6,p=True)
@@ -341,40 +339,34 @@ class Connect4:
             move = -1
             if self.__player:
                 self.__player = False
-                temp = int(input("Enter a value from 1-7: "))
-                move = temp-1
-                while temp>7 or temp<1:
-                    print(temp,"is not in range.")
-                    temp = int(input("Enter a value from 1-7: "))
-                    move = temp-1
-                temp = self.__board.insert(temp-1,"X")
-                while temp!=True:
-                    print("Column alread full")
-                    temp = int(input("Enter a value from 1-7: "))
-                    move = temp-1
-                    while temp>7 or temp<1:
-                        print(temp,"is not in range.")
+                while True:
+                    try:
                         temp = int(input("Enter a value from 1-7: "))
-                        move = temp-1
-                    temp = self.__board.insert(temp-1,"X")
+                        if temp<1 or temp>7:
+                            continue
+                        if not self.__board.insert(temp-1,"X"):
+                            continue
+                        break
+                    except KeyboardInterrupt:
+                        exit()
+                    except:
+                        continue
+                move = temp-1
             else:
                 self.__player = True
-                temp = int(input("Enter a value from 1-7: "))
-                move = temp-1
-                while temp>7 or temp<1:
-                    print(temp,"is not in range.")
-                    temp = int(input("Enter a value from 1-7: "))
-                    move = temp-1
-                temp = self.__board.insert(temp-1,"O")
-                while temp!=True:
-                    print("Column alread full")
-                    temp = int(input("Enter a value from 1-7: "))
-                    move = temp-1
-                    while temp>7 or temp<1:
-                        print(temp,"is not in range.")
+                while True:
+                    try:
                         temp = int(input("Enter a value from 1-7: "))
-                        move = temp-1
-                    temp = self.__board.insert(temp-1,"O")
+                        if temp<1 or temp>7:
+                            continue
+                        if not self.__board.insert(temp-1,"O"):
+                            continue
+                        break
+                    except KeyboardInterrupt:
+                        exit()
+                    except:
+                        continue
+                move = temp-1
             self.__board.heurSupport(move)#,True)
             final = self.__board.winloss(move,True)
             print("Current move:",move+1)
@@ -463,3 +455,6 @@ temp = Connect4()
 temp.start_game()
 
 # 3 4 5 5 3 4 4 2 1 3 3
+
+# 4 5 7 1 5 6 5 3 7 3 4 3 5 5 6 1 1 1 7 2
+# 5 4 4 3 2 3 3 7 6 5 6/2
