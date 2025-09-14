@@ -4,20 +4,92 @@ class SecureChatClient {
         this.username = null;
         this.currentRoom = null;
         this.currentTransferId = null;
+        this.typingTimeout = null;
+        this.isTyping = false;
+        this.private_key = new TextEncoder().encode('this_is_the_key_for_ICN_project=');
         
+        // Group video call properties
+        this.localStream = null;
+        this.peerConnections = new Map(); // Map of username -> RTCPeerConnection
+        this.remoteStreams = new Map(); // Map of username -> MediaStream
+        this.isInCall = false;
+        this.participants = new Set();
+
         this.initialiseElements();
         this.attachEventListeners();
         this.connectSocket();
     }
+    // getRandomVlaues
+    // Import Key
+    // encrypt
+    // decrypt
+    async Encrypt(message) {
+        try {
+            const nonce = crypto.getRandomValues(new Uint8Array(16));
+            const key = await crypto.subtle.importKey(
+                'raw', this.private_key, { name: 'AES-GCM' }, false, ['encrypt']);
+            
+            const messageData = new TextEncoder().encode(message);
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: nonce, tagLength: 128 },
+                key,
+                messageData
+            );
+            
+            const encryptedArray = new Uint8Array(encrypted);
+            const tag = encryptedArray.slice(-16);
+            const encryptedData = encryptedArray.slice(0, -16);
+            
+            const combined = new Uint8Array(16 + 16 + encryptedData.length);
+            combined.set(nonce, 0);
+            combined.set(tag, 16);
+            combined.set(encryptedData, 32);
+            
+            return btoa(String.fromCharCode(...combined));
+        } catch (error) {
+            console.log('Encryption failed');
+            return message;
+        }
+    }
 
-    // Pending is for video.
+    async Decrypt(encryptedMessage) {
+        try {
+            const data = Uint8Array.from(atob(encryptedMessage), c => c.charCodeAt(0));
+            const nonce = data.slice(0, 16);
+            const tag = data.slice(16, 32);
+            const encryptedData = data.slice(32);
+            const key = await crypto.subtle.importKey(
+                'raw', this.private_key, { name: 'AES-GCM' }, false, ['decrypt']);
+
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv: nonce, tagLength: 128 },key,
+                new Uint8Array([...encryptedData, ...tag])
+            );
+            
+            return new TextDecoder().decode(decrypted);
+        } catch (error) {
+            console.log('Decryption failed');
+            return encryptedMessage; 
+        }
+    }
+
     // Initialise all the elements - Starting
     initialiseElements() {
         this.loginScreen = document.getElementById('loginScreen');
         this.mainScreen = document.getElementById('mainScreen');
-        this.usernameInput = document.getElementById('username');
-        this.joinBtn = document.getElementById('joinBtn');
+        this.loginTab = document.getElementById('loginTab');
+        this.registerTab = document.getElementById('registerTab');
+        this.loginForm = document.getElementById('loginForm');
+        this.registerForm = document.getElementById('registerForm');
+        this.loginUsername = document.getElementById('loginUsername');
+        this.loginPassword = document.getElementById('loginPassword');
+        this.loginBtn = document.getElementById('loginBtn');
         this.loginStatus = document.getElementById('loginStatus');
+        this.registerUsername = document.getElementById('registerUsername');
+        this.registerPassword = document.getElementById('registerPassword');
+        this.confirmPassword = document.getElementById('confirmPassword');
+        this.registerBtn = document.getElementById('registerBtn');
+        this.registerStatus = document.getElementById('registerStatus');
         this.currentUser = document.getElementById('currentUser');
         this.disconnectBtn = document.getElementById('disconnectBtn');
         this.roomInput = document.getElementById('roomInput');
@@ -25,6 +97,7 @@ class SecureChatClient {
         this.roomStatus = document.getElementById('roomStatus');
         this.roomUsers = document.getElementById('roomUsers');
         this.usersList = document.getElementById('usersList');
+        this.usersTyping = document.getElementById('usersTyping');
         this.typingUsersList = document.getElementById('typingUsersList');
         this.messages = document.getElementById('messages');
         this.messageInput = document.getElementById('messageInput');
@@ -36,42 +109,119 @@ class SecureChatClient {
         this.fileStatus = document.getElementById('fileStatus');
         this.closeModalBtn = document.getElementById('closeModalBtn');
         this.toastContainer = document.getElementById('toastContainer');
+        this.videoCallBtn = document.getElementById('videoCallBtn');
+        this.videoModal = document.getElementById('videoModal');
+        this.videoCallTitle = document.getElementById('videoCallTitle');
+        this.videoGrid = document.getElementById('videoGrid');
+        this.participantCount = document.getElementById('participantCount');
+        this.muteToggleBtn = document.getElementById('muteToggleBtn');
+        this.videoToggleBtn = document.getElementById('videoToggleBtn');
+        this.endCallBtn = document.getElementById('endCallBtn');
+        this.closeVideoBtn = document.getElementById('closeVideoBtn');
+        this.videoStatus = document.getElementById('videoStatus');
     }
     // Initialise all the elements - End
 
     // Event listeners we are adding here - Starting
-
-    // Both btn press and enter key is the standard ie the user can use both click or enter to the things
     attachEventListeners() {
-        // Login (Password thing is pending)
-        this.joinBtn.addEventListener('click', () => this.joinChat());
-        this.usernameInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.joinChat();
+        // Tab switching
+        this.loginTab.addEventListener('click', () => this.showLoginForm());
+        this.registerTab.addEventListener('click', () => this.showRegisterForm());
+        this.loginBtn.addEventListener('click', () => this.handleLogin());
+        this.loginUsername.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.handleLogin();
+        });
+        this.loginPassword.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.handleLogin();
+        });
+        this.registerBtn.addEventListener('click', () => this.handleRegister());
+        this.registerUsername.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.handleRegister();
+        });
+        this.registerPassword.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.handleRegister();
+        });
+        this.confirmPassword.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') this.handleRegister();
         });
         this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
         this.roomInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.joinRoom();
         });
+        this.messageInput.addEventListener('input', () => this.userTyping());
         this.sendBtn.addEventListener('click', () => this.sendMessage());
         this.messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();
         });
+
         this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
         this.closeModalBtn.addEventListener('click', () => this.hideModal());
         this.disconnectBtn.addEventListener('click', () => this.disconnect());
+        
+        this.videoCallBtn.addEventListener('click', () => this.joinVideoCall());
+        this.muteToggleBtn.addEventListener('click', () => this.toggleMute());
+        this.videoToggleBtn.addEventListener('click', () => this.toggleVideo());
+        this.endCallBtn.addEventListener('click', () => this.leaveVideoCall());
+        this.closeVideoBtn.addEventListener('click', () => this.leaveVideoCall());
     }
     // Event listeners - End
 
-    // Defining the functions for different things -  Start
-    // Here the logic will be like when any of these functions is invoked, **emit** will be there which will relay the information to the server asking it to do the corresponding event
-    joinChat() {
-        const username = this.usernameInput.value.trim();
-        if (username == "") {
-            this.showStatus(this.loginStatus, 'Please enter a username', 'error');
+    // Authentication functions
+    showLoginForm() {
+        this.loginTab.classList.add('active');
+        this.registerTab.classList.remove('active');
+        this.loginForm.classList.add('active');
+        this.registerForm.classList.remove('active');
+    }
+    
+    showRegisterForm() {
+        this.registerTab.classList.add('active');
+        this.loginTab.classList.remove('active');
+        this.registerForm.classList.add('active');
+        this.loginForm.classList.remove('active');
+    }
+    
+    handleLogin() {
+        const username = this.loginUsername.value.trim();
+        const password = this.loginPassword.value.trim();
+
+        if (username == "" || password == "") {
+            this.showStatus(this.loginStatus, 'Please enter both username and password', 'error');
             return;
         }
-        this.showStatus(this.loginStatus, 'Joining chat server', 'info');
-        this.socket.emit('join_chat', {username});
+        
+        this.showStatus(this.loginStatus, 'Logging in', 'info');
+        this.socket.emit('login_user', { username, password });
+    }
+    
+    handleRegister() {
+        const username = this.registerUsername.value.trim();
+        const password = this.registerPassword.value.trim();
+        const confirmPassword = this.confirmPassword.value.trim();
+        
+        // Validation
+        if (!username || !password || !confirmPassword) {
+            this.showStatus(this.registerStatus, 'Please fill in all fields', 'error');
+            return;
+        }
+        
+        if (username.length < 3) {
+            this.showStatus(this.registerStatus, 'Username must be at least 3 characters long', 'error');
+            return;
+        }
+        
+        if (password.length < 6) {
+            this.showStatus(this.registerStatus, 'Password must be at least 6 characters long', 'error');
+            return;
+        }
+        
+        if (password !== confirmPassword) {
+            this.showStatus(this.registerStatus, 'Passwords do not match', 'error');
+            return;
+        }
+        
+        this.showStatus(this.registerStatus, 'Creating account...', 'info');
+        this.socket.emit('register_user', { username, password });
     }
 
     joinRoom() {
@@ -85,31 +235,53 @@ class SecureChatClient {
         this.roomInput.value = '';
     }
 
-    sendMessage() {
+    userTyping() {
+        if (!this.isTyping) {
+            this.socket.emit('user_start_typing');
+            this.isTyping = true;
+        }
+        if (this.typingTimeout) {
+            clearTimeout(this.typingTimeout);
+        }
+        this.typingTimeout = setTimeout(() => {
+            this.socket.emit('user_stop_typing');
+            this.isTyping = false;
+        }, 3000);
+    }
+
+    async sendMessage() {
         const message = this.messageInput.value.trim();
         if (!message) return;
-        this.socket.emit('send_message', { message });
+        
+        if (this.isTyping) {
+            this.socket.emit('user_stop_typing');
+            this.isTyping = false;
+            if (this.typingTimeout) {
+                clearTimeout(this.typingTimeout);
+                this.typingTimeout = null;
+            }
+        }
+        
+        const encryptedMessage = await this.Encrypt(message);
+        this.socket.emit('send_message', { message: encryptedMessage });
         this.messageInput.value = '';
     }
 
     handleFileSelect(event) {
         const file = event.target.files[0];
         if (!file) return; 
-         // 1 kb = 1024 bytes and 1 MB = 1024 * 1024 bytes. After seeing the performance we can increase the limit.
         if (file.size > 10 * 1024 * 1024) {
             this.showToast('File too large. Maximum is 10 MB', 'error');
             return;
         }
-
         this.uploadFile(file);
         event.target.value = ''; 
     }
 
     async uploadFile(file) {
-        const chunkSize = 64 * 1024; // 64KB chunks  
+        const chunkSize = 64 * 1024;
         const totalChunks = Math.ceil(file.size / chunkSize);
 
-        // Show progress modal
         this.showModal();
         this.fileStatus.textContent = `Uploading: ${file.name}`;
         this.updateProgress(0);
@@ -120,7 +292,7 @@ class SecureChatClient {
         });
 
         while (!this.currentTransferId) {
-            await new Promise(resolve => setTimeout(resolve, 50));  // delay
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
 
         for (let i = 0; i < totalChunks; i++) {
@@ -194,19 +366,14 @@ class SecureChatClient {
         
         this.showToast(`File received: ${filename}`, 'success');
     }
-    //Just like the upload thing for chunks
+
     downloadFile(filename, base64Data) {
         try {
-            console.log('Attempting to download file:', filename);
-            console.log('Base64 data length:', base64Data.length);
-            console.log('Base64 data preview:', base64Data.substring(0, 100) + '...');
-            
-            if (!base64Data || base64Data.length === 0) {   // validatong base64
+            if (!base64Data || base64Data.length === 0) {
                 throw new Error('Empty or invalid base64 data');
             }
 
-            const cleanBase64 = base64Data.replace(/\s/g, '');  //Was showing error without this remember in future
-            
+            const cleanBase64 = base64Data.replace(/\s/g, '');
             const byteCharacters = atob(cleanBase64);
             const byteNumbers = new Array(byteCharacters.length);
             for (let i = 0; i < byteCharacters.length; i++) {
@@ -214,8 +381,6 @@ class SecureChatClient {
             }
             const byteArray = new Uint8Array(byteNumbers);
             const blob = new Blob([byteArray]);
-            
-            console.log('Blob created successfully, size:', blob.size);
             
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -227,9 +392,7 @@ class SecureChatClient {
             URL.revokeObjectURL(url);
             this.showToast(`Downloaded: ${filename}`, 'success');
         } catch (error) {
-            console.error('Download error details:', error);
-            console.error('Error name:', error.name);
-            console.error('Error message:', error.message);
+            console.error('Download error:', error);
             this.showToast(`Failed to download file: ${error.message}`, 'error');
         }
     }
@@ -245,6 +408,17 @@ class SecureChatClient {
     showMainScreen() {
         this.loginScreen.classList.add('hidden');
         this.mainScreen.classList.remove('hidden');
+    }
+
+    clearAuthForms() {
+        this.loginUsername.value = '';
+        this.loginPassword.value = '';
+        this.loginStatus.textContent = '';
+        
+        this.registerUsername.value = '';
+        this.registerPassword.value = '';
+        this.confirmPassword.value = '';
+        this.registerStatus.textContent = '';
     }
 
     showModal() {
@@ -279,7 +453,6 @@ class SecureChatClient {
         
         this.toastContainer.appendChild(toast);
         
-        // Auto remove after 3 seconds
         setTimeout(() => {
             if (toast.parentNode) {
                 toast.parentNode.removeChild(toast);
@@ -292,6 +465,326 @@ class SecureChatClient {
             this.socket.disconnect();
         }
         location.reload();
+    }
+
+    // Group Video Call Methods
+    async joinVideoCall() {
+        if (this.isInCall) {
+            this.showToast('You are already in a video call', 'error');
+            return;
+        }
+        
+        if (!this.currentRoom) {
+            this.showToast('You must be in a room to start a video call', 'error');
+            return;
+        }
+        
+        try {
+            await this.setupLocalStream();
+            this.socket.emit('join_video_call');
+            this.isInCall = true;
+            this.showVideoModal();
+            this.showVideoStatus('Joining video call', 'info');
+        } catch (error) {
+            console.error('Error joining video call:', error);
+            this.showToast('Failed to join video call', 'error');
+        }
+    }
+
+    async setupLocalStream() {
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({  // mediadevices API
+                video: true,
+                audio: true
+            });
+            this.addLocalVideoToGrid();
+            return true;
+        } catch (error) {
+            console.error('Error accessing media devices:', error);
+            this.showToast('Could not access camera/microphone', 'error');
+            throw error;
+        }
+    }
+
+    addLocalVideoToGrid() {
+        const existingLocal = document.querySelector('.video-participant.local');
+        if (existingLocal) {
+            existingLocal.remove();
+        }
+
+        const videoContainer = document.createElement('div');
+        videoContainer.className = 'video-participant local';
+        videoContainer.id = `participant-${this.username}`;
+
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = this.localStream;
+
+        const participantInfo = document.createElement('div');
+        participantInfo.className = 'participant-info';
+        participantInfo.textContent = `${this.username} (You)`;
+
+        videoContainer.appendChild(video);
+        videoContainer.appendChild(participantInfo);
+        this.videoGrid.appendChild(videoContainer);
+
+        this.participants.add(this.username);
+        this.updateGridLayout();
+    }
+
+    async createPeerConnection(username) {
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        const peerConnection = new RTCPeerConnection(configuration);
+        if (this.localStream) {   // Add local stream to peer connection
+            this.localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, this.localStream);
+            });
+        }
+        peerConnection.ontrack = (event) => {
+            console.log('Received remote stream from:', username);
+            this.remoteStreams.set(username, event.streams[0]);
+            this.addRemoteVideoToGrid(username, event.streams[0]);
+        };
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) { // ICE Candidate
+                this.socket.emit('webrtc_ice_candidate', {
+                    candidate: event.candidate,
+                    target_user: username
+                });
+            }
+        };
+
+        peerConnection.onconnectionstatechange = () => {
+            console.log(`Connection state with ${username}:`, peerConnection.connectionState);
+            if (peerConnection.connectionState === 'connected') {
+                this.showVideoStatus(`Connected to ${username}`, 'success');
+            } else if (peerConnection.connectionState === 'disconnected' || 
+                       peerConnection.connectionState === 'failed') {
+                this.handlePeerDisconnection(username);
+            }
+        };
+
+        this.peerConnections.set(username, peerConnection);
+        return peerConnection;
+    }
+
+    addRemoteVideoToGrid(username, stream) {
+        const existingVideo = document.getElementById(`participant-${username}`);
+        if (existingVideo) {
+            existingVideo.remove();
+        }
+
+        const videoContainer = document.createElement('div');
+        videoContainer.className = 'video-participant remote';
+        videoContainer.id = `participant-${username}`;
+
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+
+        const participantInfo = document.createElement('div');
+        participantInfo.className = 'participant-info';
+        participantInfo.textContent = username;
+
+        videoContainer.appendChild(video);
+        videoContainer.appendChild(participantInfo);
+        this.videoGrid.appendChild(videoContainer);
+
+        this.participants.add(username);
+        this.updateGridLayout();
+    }
+
+    updateGridLayout() {
+        const participantCount = this.participants.size;
+        this.participantCount.textContent = `${participantCount} participant${participantCount !== 1 ? 's' : ''}`;
+        this.videoGrid.className = 'video-grid';
+        if (participantCount <= 1) {
+            this.videoGrid.classList.add('participants-1');
+        } else if (participantCount === 2) {
+            this.videoGrid.classList.add('participants-2');
+        } else if (participantCount <= 4) {
+            this.videoGrid.classList.add('participants-4');
+        } else if (participantCount <= 6) {
+            this.videoGrid.classList.add('participants-6');
+        } else if (participantCount <= 9) {
+            this.videoGrid.classList.add('participants-9');
+        } else {
+            this.videoGrid.classList.add('participants-many');
+        }
+    }
+
+    async handleNewParticipant(username) {
+        if (username === this.username) return;
+
+        console.log('Creating peer connection for new participant:', username);
+        const peerConnection = await this.createPeerConnection(username);
+        try {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            
+            this.socket.emit('webrtc_offer', {
+                offer: offer,
+                target_user: username
+            });
+        } catch (error) {
+            console.error('Error creating offer for', username, ':', error);
+        }
+    }
+
+    async handleOffer(offer, fromUser) {
+        if (fromUser === this.username) return;
+
+        console.log('Handling offer from:', fromUser);
+        let peerConnection = this.peerConnections.get(fromUser);
+        
+        if (!peerConnection) {
+            peerConnection = await this.createPeerConnection(fromUser);
+        }
+        
+        try {
+            await peerConnection.setRemoteDescription(offer);
+            
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            
+            this.socket.emit('webrtc_answer', {
+                answer: answer,
+                target_user: fromUser
+            });
+        } catch (error) {
+            console.error('Error handling offer from', fromUser, ':', error);
+        }
+    }
+
+    async handleAnswer(answer, fromUser) {
+        if (fromUser === this.username) return;
+
+        console.log('Handling answer from:', fromUser);
+        const peerConnection = this.peerConnections.get(fromUser);
+        
+        if (peerConnection) {
+            try {
+                await peerConnection.setRemoteDescription(answer);
+            } catch (error) {
+                console.error('Error handling answer from', fromUser, ':', error);
+            }
+        }
+    }
+
+    async handleIceCandidate(candidate, fromUser) {
+        if (fromUser === this.username) return;
+
+        const peerConnection = this.peerConnections.get(fromUser);
+        
+        if (peerConnection) {
+            try {
+                await peerConnection.addIceCandidate(candidate);
+            } catch (error) {
+                console.error('Error adding ICE candidate from', fromUser, ':', error);
+            }
+        }
+    }
+
+    handlePeerDisconnection(username) {
+        console.log('Peer disconnected:', username);
+        const peerConnection = this.peerConnections.get(username);
+        if (peerConnection) {
+            peerConnection.close();
+            this.peerConnections.delete(username);
+        }
+        this.remoteStreams.delete(username);
+        const videoElement = document.getElementById(`participant-${username}`);
+        if (videoElement) {
+            videoElement.remove();
+        }
+        
+        this.participants.delete(username);
+        this.updateGridLayout();
+    }
+
+    toggleMute() {
+        if (!this.localStream) return;
+        
+        const audioTrack = this.localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            this.muteBtn.textContent = audioTrack.enabled ? 'Mute' : 'Unmute';
+            this.muteBtn.className = audioTrack.enabled ? 'btn secondary' : 'btn secondary muted';
+            
+            const localContainer = document.getElementById(`participant-${this.username}`);
+            if (localContainer) {
+                let mutedIndicator = localContainer.querySelector('.participant-muted');
+                if (!audioTrack.enabled) {
+                    if (!mutedIndicator) {
+                        mutedIndicator = document.createElement('div');
+                        mutedIndicator.className = 'participant-muted';
+                        mutedIndicator.textContent = 'Muted';
+                        localContainer.appendChild(mutedIndicator);
+                    }
+                } else if (mutedIndicator) {
+                    mutedIndicator.remove();
+                }
+            }
+        }
+    }
+
+    toggleVideo() {
+        if (!this.localStream) return;
+        
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.enabled = !videoTrack.enabled;
+            this.videoToggleBtn.textContent = videoTrack.enabled ? 'Video' : 'Video Off';
+            this.videoToggleBtn.className = videoTrack.enabled ? 'btn secondary' : 'btn secondary video-off';
+        }
+    }
+
+    leaveVideoCall() {
+        this.socket.emit('leave_video_call');
+        this.cleanupVideoCall();
+    }
+
+    cleanupVideoCall() {
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+ 
+        this.peerConnections.forEach((peerConnection, username) => {
+            peerConnection.close();
+        });
+        this.peerConnections.clear();
+        this.remoteStreams.clear();
+        this.participants.clear();
+        this.videoGrid.innerHTML = '';
+        this.isInCall = false;
+        this.muteBtn.textContent = '🎤 Mute';
+        this.muteBtn.className = 'btn secondary';
+        this.videoToggleBtn.textContent = '📹 Video';
+        this.videoToggleBtn.className = 'btn secondary';
+        this.hideVideoModal();
+    }
+
+    showVideoModal() {
+        this.videoModal.classList.remove('hidden');
+    }
+
+    hideVideoModal() {
+        this.videoModal.classList.add('hidden');
+    }
+
+    showVideoStatus(message, type) {
+        this.videoStatus.textContent = message;
+        this.videoStatus.className = `status ${type}`;
     }
 
     connectSocket() {
@@ -312,11 +805,28 @@ class SecureChatClient {
             this.showToast('Connection lost', 'error');
         });
 
-        this.socket.on('join_success', (data) => {
-            this.username = data.username;
+        // Authentication event handlers
+        this.socket.on('login_success', (data) => {
+            this.username = data.user.username;
             this.currentUser.textContent = `Username: ${this.username}`;
             this.showMainScreen();
-            this.showToast('Welcome to Secure Chat Application', 'success');
+            this.showToast('Login successful!', 'success');
+            this.clearAuthForms();
+        });
+
+        this.socket.on('login_error', (data) => {
+            this.showStatus(this.loginStatus, data.message, 'error');
+        });
+
+        this.socket.on('register_success', (data) => {
+            this.showStatus(this.registerStatus, data.message, 'success');
+            this.showToast('Account created successfully! Please login', 'success');
+            this.showLoginForm();
+            this.clearAuthForms();
+        });
+
+        this.socket.on('register_error', (data) => {
+            this.showStatus(this.registerStatus, data.message, 'error');
         });
 
         this.socket.on('room_joined', (data) => {
@@ -325,12 +835,21 @@ class SecureChatClient {
             this.roomStatus.className = 'status success';
             this.usersList.textContent = data.users.join(', ');
             this.roomUsers.classList.remove('hidden');
+            this.usersTyping.classList.add('hidden');
+            this.typingUsersList.textContent = '';
+            if (this.isTyping) {
+                this.isTyping = false;
+                if (this.typingTimeout) {
+                    clearTimeout(this.typingTimeout);
+                    this.typingTimeout = null;
+                }
+            }
             
-            // Enable chat
             this.messageInput.disabled = false;
             this.messageInput.placeholder = 'Type your message';
             this.sendBtn.disabled = false;
             this.fileInput.disabled = false;
+            this.videoCallBtn.disabled = false;
             
             this.clearMessages();
             this.addSystemMessage(`Joined room: ${data.room_id}`);
@@ -345,19 +864,21 @@ class SecureChatClient {
             this.usersList.textContent = data.users.join(', ');
         });
         
-        /*
         this.socket.on('users_typing', (data) => {
-            this.typingUsersList.textContent = data.users.join(', ');
-            this.usersTyping.classList.remove('hidden');
+            const typingUsers = data.users || [];
+            this.typingUsersList.textContent = typingUsers.join(', ');
+            if (typingUsers.length > 0) {
+                this.usersTyping.classList.remove('hidden');
+            } else {
+                this.usersTyping.classList.add('hidden');
+            }
         });
-        */
-
-        // Message events
-        this.socket.on('new_message', (data) => {
-            this.addMessage(data.username, data.message, data.timestamp);
+        
+        this.socket.on('new_message', async (data) => {
+            const decryptedMessage = await this.Decrypt(data.message);
+            this.addMessage(data.username, decryptedMessage, data.timestamp);
         });
 
-        // File transfer events
         this.socket.on('transfer_ready', (data) => {
             this.currentTransferId = data.transfer_id;
         });
@@ -374,9 +895,51 @@ class SecureChatClient {
             this.addFileMessage(data.filename, data.file_data, data.sender);
         });
 
-        // Universal Error events -  If the server sends an error let this catch
         this.socket.on('error', (data) => {
             this.showToast(data.message, 'error');
+        });
+
+        // Group video call event handlers
+        this.socket.on('user_joined_video_call', (data) => {
+            console.log('User joined video call:', data.username);
+            if (data.username !== this.username) {
+                this.handleNewParticipant(data.username);
+            }
+            this.showToast(`${data.username} joined the video call`, 'info');
+        });
+
+        this.socket.on('user_left_video_call', (data) => {
+            console.log('User left video call:', data.username);
+            this.handlePeerDisconnection(data.username);
+            this.showToast(`${data.username} left the video call`, 'info');
+        });
+
+        this.socket.on('video_call_participants', (data) => {
+            console.log('Current video call participants:', data.participants);
+            data.participants.forEach(username => {
+                if (username !== this.username) {
+                    this.handleNewParticipant(username);
+                }
+            });
+        });
+
+        // WebRTC signaling events for group calls
+        this.socket.on('webrtc_offer', (data) => {
+            if (data.target_user === this.username) {
+                this.handleOffer(data.offer, data.from_user);
+            }
+        });
+
+        this.socket.on('webrtc_answer', (data) => {
+            if (data.target_user === this.username) {
+                this.handleAnswer(data.answer, data.from_user);
+            }
+        });
+
+        this.socket.on('webrtc_ice_candidate', (data) => {
+            if (data.target_user === this.username) {
+                this.handleIceCandidate(data.candidate, data.from_user);
+            }
         });
     }
 }
